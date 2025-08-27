@@ -1,50 +1,177 @@
 <?php
+// save_audit.php — Guarda usando orders → audits → audit_answers y muestra confirmación bonita
 require_once __DIR__ . '/../app/db.php';
 date_default_timezone_set('America/Argentina/Buenos_Aires');
 $pdo = db();
 
+function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+
+// ===============================
+// Cargar checklist para validar y mostrar textos
+// ===============================
 $items = $pdo->query("
   SELECT id, item_order, question, responsable_default
   FROM checklist_items
   WHERE active=1
   ORDER BY item_order
-")->fetchAll();
+")->fetchAll(PDO::FETCH_ASSOC);
 
-$now = new DateTime('now', new DateTimeZone('America/Argentina/Buenos_Aires'));
-$weekMonday = (clone $now)->modify('monday this week')->format('Y-m-d');
+$itemIndex = [];
+foreach ($items as $it) {
+  $itemIndex[(int)$it['id']] = $it;
+}
 
-$responsables = [
-  "As. Servicio",
-  "As. Citas",
-  "Cajero",
-  "Jefe de Taller",
-  "Gerente PostVenta",
-  "Gerente repuestos",
-  "Responsable de Calidad",
-  "Encuestador Telefónico",
-  "Responsable de Garantía",
-  "Responsable de Chapa y Pintura",
-  "Otros"
-];
+// ===============================
+// Leer POST
+// ===============================
+$errMsg  = null;
+$auditId = null;
+$orderId = null;
+
+// Campos del formulario
+$order_number = trim($_POST['order_number'] ?? '');
+$order_type   = trim($_POST['order_type'] ?? '');       // cliente | garantia | interna
+$week_date    = trim($_POST['week_date'] ?? '');        // YYYY-MM-DD (lunes de la semana)
+$audit_date   = trim($_POST['audit_date'] ?? '');       // opcional (si lo enviás), YYYY-MM-DD
+
+$ans        = $_POST['ans']        ?? []; // [item_id => 'OK'|'1'|'N']
+$resp       = $_POST['resp']       ?? []; // [item_id => 'Responsable'|'Otros']
+$resp_other = $_POST['resp_other'] ?? []; // [item_id => 'Texto si Otros']
+
+// Validaciones mínimas
+$errors = [];
+if ($order_number === '') $errors[] = 'Falta el número de OR.';
+if (!in_array($order_type, ['cliente','garantia','interna'], true)) $errors[] = 'Tipo de orden inválido.';
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $week_date)) $errors[] = 'Fecha de semana inválida (formato esperado YYYY-MM-DD).';
+
+// Sanear respuestas y calcular KPIs
+$cleanAnswers = [];
+foreach ($ans as $iid => $val) {
+  $iid = (int)$iid;
+  if (!isset($itemIndex[$iid])) continue; // ignorar ítems que no existen
+
+  $val = strtoupper(trim((string)$val));
+  if (!in_array($val, ['OK','1','N'], true)) $val = 'OK';
+
+  $rval = isset($resp[$iid]) ? trim((string)$resp[$iid]) : '';
+  if ($rval === 'Otros') {
+    $alt = trim((string)($resp_other[$iid] ?? ''));
+    if ($alt !== '') $rval = $alt;
+  }
+  if ($rval === '') $rval = (string)($itemIndex[$iid]['responsable_default'] ?? '');
+
+  $cleanAnswers[$iid] = [
+    'status'      => $val,
+    'responsable' => $rval
+  ];
+}
+
+if (empty($cleanAnswers)) $errors[] = 'No se recibieron respuestas de auditoría.';
+
+$kpis = ['OK'=>0,'1'=>0,'N'=>0];
+foreach ($cleanAnswers as $row) $kpis[$row['status']]++;
+$app = $kpis['OK'] + $kpis['1'];            // aplicables
+$err = $kpis['1'];
+$na  = $kpis['N'];
+$pct = ($app > 0) ? round(($err / $app) * 100, 2) : 0.0;
+
+// ===============================
+// Guardar si todo OK
+// ===============================
+if (empty($errors)) {
+  try {
+    $pdo->beginTransaction();
+
+    // 1) Buscar ó crear la OR en `orders`
+    //    (si ya existe por order_number, la usamos; si no, la creamos)
+    $stmtOrd = $pdo->prepare("SELECT id FROM orders WHERE order_number = :num LIMIT 1");
+    $stmtOrd->execute([':num' => $order_number]);
+    $orderId = $stmtOrd->fetchColumn();
+
+    if (!$orderId) {
+      $stmtInsOrd = $pdo->prepare("
+        INSERT INTO orders (order_number, order_type, week_date)
+        VALUES (:num, :type, :week)
+      ");
+      $stmtInsOrd->execute([
+        ':num'  => $order_number,
+        ':type' => $order_type,
+        ':week' => $week_date,
+      ]);
+      $orderId = (int)$pdo->lastInsertId();
+    } else {
+      // opcional: si querés mantener sincronizado tipo/semana cuando la OR ya existe
+      $stmtUpdOrd = $pdo->prepare("
+        UPDATE orders
+        SET order_type = :type, week_date = :week
+        WHERE id = :id
+      ");
+      $stmtUpdOrd->execute([
+        ':type' => $order_type,
+        ':week' => $week_date,
+        ':id'   => $orderId,
+      ]);
+    }
+
+    // 2) Crear la auditoría en `audits`
+    $stmtA = $pdo->prepare("
+      INSERT INTO audits (order_id, total_items, errors_count, not_applicable_count, error_percentage)
+      VALUES (:order_id, :total, :errors, :na, :pct)
+    ");
+    $stmtA->execute([
+      ':order_id' => $orderId,
+      ':total'    => count($cleanAnswers),
+      ':errors'   => $err,
+      ':na'       => $na,
+      ':pct'      => $pct,
+    ]);
+    $auditId = (int)$pdo->lastInsertId();
+
+    // 3) Insertar las respuestas en `audit_answers`
+    $stmtAns = $pdo->prepare("
+      INSERT INTO audit_answers (audit_id, item_id, value, responsable_text, question_text)
+      VALUES (:audit_id, :item_id, :val, :resp, :qtxt)
+    ");
+    foreach ($cleanAnswers as $iid => $row) {
+      $stmtAns->execute([
+        ':audit_id' => $auditId,
+        ':item_id'  => $iid,
+        ':val'      => $row['status'],
+        ':resp'     => $row['responsable'],
+        ':qtxt'     => $itemIndex[$iid]['question'] ?? '',
+      ]);
+    }
+
+    $pdo->commit();
+
+  } catch (Throwable $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
+    $errors[] = 'Error al guardar en BD: ' . $e->getMessage();
+  }
+}
+
+$errMsg = empty($errors) ? null : implode(' ', $errors);
+
+// ===============================
+// UI — mismo estilo que create.php (sin Bootstrap)
+// ===============================
 ?>
 <!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Nueva Auditoría · Organización Sur</title>
+  <title><?= $auditId ? 'Auditoría guardada' : 'Error al guardar' ?> · Organización Sur</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <!-- Bootstrap 5 + Font Awesome -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Font Awesome -->
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet">
-  <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
   <style>
     :root{
       --bg:#0a0f18; --bg2:#0b121d; --surface:#101826; --surface2:#0f1725; --border:#1b2535;
-      --text:#e7ecf3; --muted:#9fb0c9;
-      --accent:#00A3E0; --accent-2:#00b4ff; /* VW cyan */
+      --text:#e7ecf3; --muted:#9fb0c9; --accent:#00A3E0; --accent-2:#00b4ff;
       --ok-b:#2ea26d; --err-b:#d35b5b; --na-b:#5aa1ff; --sel:#111c2f; --chip:#0c1420; --radius:14px;
+      --ok-c:#2ea26d; --err-c:#e06666; --na-c:#5aa1ff; --bg-donut:#0f1725;
     }
     *{box-sizing:border-box}
     body{
@@ -58,100 +185,123 @@ $responsables = [
     a:hover{text-decoration:underline}
 
     .appbar{position:sticky; top:0; z-index:20; background:rgba(10,15,24,.7); backdrop-filter: blur(8px); border-bottom:1px solid var(--border)}
-    .appbar-inner{width:min(1150px, 92vw); margin:0 auto; padding:12px 0; display:flex; gap:12px; align-items:center}
+    .appbar-inner{width:min(1200px, 94vw); margin:0 auto; padding:12px 0; display:flex; gap:12px; align-items:center}
     .dot{width:22px; height:22px; border-radius:999px; background:linear-gradient(180deg,var(--accent),var(--accent-2)); box-shadow:0 0 16px rgba(0,163,224,.35)}
     .brand{font-weight:800; letter-spacing:.25px; display:flex; align-items:center; gap:10px}
     .brand i{opacity:.9}
     .spacer{flex:1}
+    .btn{display:inline-flex; align-items:center; gap:8px; border:1px solid var(--border); color:#dbe7ff; background:transparent; padding:8px 12px; border-radius:10px}
+    .btn:hover{border-color:#2a3a55}
+    .btn-primary{background:linear-gradient(180deg,var(--accent),var(--accent-2)); color:#fff; border:0}
 
-    .wrap{width:min(1150px, 92vw); margin:24px auto; padding-bottom:110px}
-    .card-dark{background:linear-gradient(180deg, rgba(255,255,255,.015), rgba(255,255,255,.01)); border:1px solid var(--border); border-radius:14px; color:var(--text); box-shadow: 0 10px 30px rgba(0,0,0,.35), inset 0 0 0 1px var(--border)}
-
-    label{display:block; margin-bottom:6px; color:#d5deea}
-    input[type=text], select{width:100%; padding:12px 12px; border-radius:12px; border:1px solid var(--border); background:var(--surface2); color:var(--text); outline:none}
-    input[type=text]:focus, select:focus{ border-color:var(--accent); box-shadow:0 0 0 3px rgba(0,163,224,.18) }
-    input[disabled]{opacity:.65}
+    .wrap{width:min(1200px, 94vw); margin:24px auto 40px}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,.015), rgba(255,255,255,.01));
+          border:1px solid var(--border); border-radius:14px;
+          box-shadow: 0 10px 30px rgba(0,0,0,.35), inset 0 0 0 1px var(--border);
+          padding:16px; margin:16px 0}
+    .grid{display:grid; gap:12px; grid-template-columns:repeat(12,1fr)}
+    .col-3{grid-column:span 3} .col-4{grid-column:span 4} .col-6{grid-column:span 6} .col-8{grid-column:span 8} .col-12{grid-column:1/-1}
+    .muted{color:var(--muted)}
 
     table{width:100%; border-collapse:separate; border-spacing:0 10px}
     thead th{font-size:13px; color:#cbd5e1; text-transform:uppercase; letter-spacing:.08em; padding:0 10px}
-    tbody tr{background:linear-gradient(180deg, rgba(255,255,255,.015), rgba(255,255,255,.01)); border:1px solid var(--border); border-radius:12px; overflow:hidden; transition:transform .08s ease}
-    tbody tr:hover{transform:translateY(-2px)}
+    tbody tr{background:linear-gradient(180deg, rgba(255,255,255,.015), rgba(255,255,255,.01)); border:1px solid var(--border);
+             border-radius:12px; overflow:hidden;}
     tbody td{padding:12px 10px; vertical-align:middle}
-    tbody tr.sel{outline:2px solid var(--accent); background:var(--sel)}
-    tbody tr.state-OK{box-shadow: inset 4px 0 0 var(--ok-b)}
-    tbody tr.state-1{box-shadow: inset 4px 0 0 var(--err-b)}
-    tbody tr.state-N{box-shadow: inset 4px 0 0 var(--na-b)}
     .num{color:#cbd5e1; font-weight:700}
-    .state-badge{font-weight:700; padding:6px 10px; border-radius:999px; font-size:12px}
-    .b-ok{background:rgba(46,162,109,.12); color:#bcebd6; border:1px solid rgba(46,162,109,.35)}
-    .b-err{background:rgba(211,91,91,.12); color:#ffd6d6; border:1px solid rgba(211,91,91,.35)}
-    .b-na{background:rgba(90,161,255,.12); color:#d5e7ff; border:1px solid rgba(90,161,255,.35)}
-    .resp-wrap{display:flex; gap:8px; align-items:center}
-    .resp-otro{display:none}
 
-    .fab{position:fixed; right:24px; bottom:24px; z-index:30; display:flex; align-items:center; gap:10px;
-         background: linear-gradient(180deg, var(--accent), var(--accent-2));
-         color:#fff; padding:12px 16px; border-radius:12px; border:0; cursor:pointer; box-shadow: 0 10px 25px rgba(0,163,224,.25); font-weight:700}
-    .fab:hover{filter:brightness(1.05)}
+    .donut{
+      position:relative; width:132px; aspect-ratio:1/1; border-radius:50%;
+      background: conic-gradient(var(--bg-donut) 0 100%); display:flex; align-items:center; justify-content:center; margin:auto;
+      border:1px solid var(--border); box-shadow: inset 0 0 0 8px #0b1320;
+    }
+    .donut .center{ position:absolute; width:62%; height:62%; border-radius:50%; background:#0b1320;
+      display:flex; align-items:center; justify-content:center; flex-direction:column; text-align:center; padding:6px; }
+    .donut .big{ font-size:20px; font-weight:800; }
+    .donut .sub{ font-size:11px; color:#9fb0c9 }
 
-    .stat{background:#0e1624; border:1px solid var(--border); border-radius:12px; padding:10px 12px; display:inline-block; margin-right:10px}
+    .badge-ok{background:rgba(46,162,109,.15); color:#bcebd6; border:1px solid rgba(46,162,109,.35); padding:6px 10px; border-radius:999px; font-weight:700}
+    .badge-err{background:rgba(211,91,91,.15); color:#ffd6d6; border:1px solid rgba(211,91,91,.35); padding:6px 10px; border-radius:999px; font-weight:700}
+    .badge-na{background:rgba(90,161,255,.15); color:#d5e7ff; border:1px solid rgba(90,161,255,.35); padding:6px 10px; border-radius:999px; font-weight:700}
+
+    @media (max-width: 820px){ .grid{grid-template-columns:1fr} }
   </style>
 </head>
 <body>
   <div class="appbar">
     <div class="appbar-inner">
       <div class="dot"></div>
-      <div class="brand"><i class="fa-solid fa-clipboard-check"></i> Nueva Auditoría</div>
-      <div class="spacer"></div>
-      <div class="btn-group">
-        <a class="btn btn-sm btn-outline-light" href="index.php" data-bs-toggle="tooltip" title="Inicio">
-          <i class="fa-solid fa-house"></i>
-        </a>
-        <button class="btn btn-sm btn-success" type="submit" form="auditForm" data-bs-toggle="tooltip" title="Guardar (Ctrl+Enter)">
-          <i class="fa-solid fa-floppy-disk"></i> Guardar
-        </button>
+      <div class="brand">
+        <i class="fa-solid fa-clipboard-check"></i>
+        <span><?= $auditId ? 'Auditoría guardada' : 'Error al guardar' ?></span>
       </div>
+      <div class="spacer"></div>
+      <a class="btn" href="index.php"><i class="fa-solid fa-house"></i> Inicio</a>
     </div>
   </div>
 
   <div class="wrap">
-    <form method="post" action="save_audit.php" id="auditForm">
-      <input type="hidden" name="week_date" value="<?= htmlspecialchars($weekMonday) ?>">
-
-      <div class="card-dark p-3 mb-3">
-        <div class="row g-3">
-          <div class="col-md-4">
-            <label>Número de OR</label>
-            <input type="text" name="order_number" required autocomplete="off" autofocus>
-          </div>
-          <div class="col-md-4">
-            <label>Tipo</label>
-            <select name="order_type" required>
-              <option value="cliente">Cliente</option>
-              <option value="garantia">Garantía</option>
-              <option value="interna">Interna</option>
-            </select>
-          </div>
-          <div class="col-md-4">
-            <label>Semana (auto)</label>
-            <input type="text" value="<?= htmlspecialchars($weekMonday) ?>" disabled>
-          </div>
+    <?php if ($errMsg): ?>
+      <div class="card">
+        <h2 style="margin:0 0 6px">No se pudo guardar</h2>
+        <p class="muted" style="margin:0 0 12px"><?= $errMsg ?></p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap">
+          <a class="btn" href="create.php"><i class="fa-solid fa-arrow-left"></i> Volver a crear</a>
+          <a class="btn btn-primary" href="index.php"><i class="fa-solid fa-house"></i> Inicio</a>
+        </div>
+      </div>
+    <?php else: ?>
+      <?php
+        // Datos para mostrar
+        $order_types = ['cliente'=>'Cliente','garantia'=>'Garantía','interna'=>'Interna'];
+        $order_type_label = $order_types[$order_type] ?? ucfirst($order_type);
+      ?>
+      <!-- Resumen -->
+      <div class="card grid">
+        <div class="col-6">
+          <h2 style="margin:0 0 8px"><i class="fa-solid fa-circle-check" style="color:#22c55e"></i> Guardado correctamente</h2>
+          <p class="muted" style="margin:0">ID Auditoría: <b>#<?= (int)$auditId ?></b></p>
+          <p class="muted" style="margin:0">OR: <b><?= h($order_number) ?></b> · Tipo: <b><?= h($order_type_label) ?></b></p>
+          <p class="muted" style="margin:0">Semana (lunes): <?= h($week_date) ?></p>
+          <?php if ($audit_date): ?>
+            <p class="muted" style="margin:0">Fecha auditoría: <?= h(DateTime::createFromFormat('Y-m-d',$audit_date)->format('d-m-Y')) ?></p>
+          <?php endif; ?>
+        </div>
+        <div class="col-6" style="display:flex; gap:10px; justify-content:flex-end; align-items:flex-start; flex-wrap:wrap">
+          <a class="btn btn-primary" href="view_audit.php?id=<?= (int)$auditId ?>"><i class="fa-solid fa-eye"></i> Ver auditoría</a>
+          <a class="btn" href="create.php"><i class="fa-solid fa-plus"></i> Nueva auditoría</a>
+          <a class="btn" href="index.php"><i class="fa-solid fa-house"></i> Inicio</a>
         </div>
       </div>
 
-      <div class="card-dark p-3">
-        <div class="mb-2">
-          <span class="stat"><b>Aplicables (OK/1):</b> <span id="st-app">0</span></span>
-          <span class="stat"><b>Errores (1):</b> <span id="st-err">0</span></span>
-          <span class="stat"><b>No aplica (N):</b> <span id="st-na">0</span></span>
-          <span class="stat"><b>% Error:</b> <span id="st-pct">0%</span></span>
+      <!-- KPIs -->
+      <div class="card grid" style="align-items:center">
+        <div class="col-4">
+          <div class="donut" id="donutPct">
+            <div class="center">
+              <div class="big" id="pctTxt"><?= h(number_format($pct,2)) ?>%</div>
+              <div class="sub">% error</div>
+            </div>
+          </div>
         </div>
-        <p class="text-secondary mb-2">Atajos: ↑/↓ mover · ← = 1 (error) · → = N · Espacio = OK · R = editar responsable · Ctrl+Enter = guardar</p>
+        <div class="col-8" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center">
+          <div class="muted">Aplicables (OK/1): <b id="st-app"><?= (int)$app ?></b></div>
+          <div class="muted">Errores (1): <b id="st-err"><?= (int)$err ?></b></div>
+          <div class="muted">No aplica (N): <b id="st-na"><?= (int)$na ?></b></div>
+          <div class="muted">% Error: <b id="st-pct"><?= h(number_format($pct,2)) ?>%</b></div>
+        </div>
+      </div>
 
-        <div class="table-responsive">
-          <table id="tbl" class="table table-sm align-middle">
+      <!-- Tabla de resultados -->
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+          <div class="muted"><i class="fa-solid fa-list-check"></i> Resultados de la auditoría</div>
+          <div class="muted" style="font-size:12px">Total ítems: <?= count($cleanAnswers ?? []) ?></div>
+        </div>
+        <div style="overflow:auto">
+          <table>
             <thead>
-              <tr class="text-secondary">
+              <tr>
                 <th style="width:56px">#</th>
                 <th>Ítem</th>
                 <th style="width:320px">Responsable</th>
@@ -159,122 +309,55 @@ $responsables = [
               </tr>
             </thead>
             <tbody>
-              <?php foreach ($items as $it):
-                $id = (int)$it['id']; $def = $it['responsable_default'] ?? '';
-              ?>
-                <tr data-id="<?= $id ?>" class="state-OK">
-                  <td class="num"><?= (int)$it['item_order'] ?></td>
-                  <td><?= htmlspecialchars($it['question']) ?></td>
-                  <td>
-                    <div class="resp-wrap">
-                      <select name="resp[<?= $id ?>]" id="resp-<?= $id ?>" onchange="toggleOtro(<?= $id ?>)">
-                        <?php foreach ($responsables as $r): ?>
-                          <option value="<?= htmlspecialchars($r) ?>" <?= $r===$def?'selected':'' ?>>
-                            <?= htmlspecialchars($r) ?>
-                          </option>
-                        <?php endforeach; ?>
-                      </select>
-                      <input type="text" class="resp-otro form-control form-control-sm" style="max-width:220px"
-                             id="resp-otro-<?= $id ?>" name="resp_other[<?= $id ?>]"
-                             placeholder="Especificar responsable" />
-                    </div>
-                  </td>
-                  <td><span class="state-badge b-ok state-label">OK</span></td>
-                </tr>
-              <?php endforeach; ?>
+              <?php if (!empty($cleanAnswers)): ?>
+                <?php
+                  $ordered = [];
+                  foreach ($cleanAnswers as $iid => $row) {
+                    $ordered[] = [
+                      'order'       => (int)($itemIndex[$iid]['item_order'] ?? 0),
+                      'question'    => (string)($itemIndex[$iid]['question'] ?? ('Ítem '.$iid)),
+                      'status'      => $row['status'],
+                      'responsable' => $row['responsable'],
+                    ];
+                  }
+                  usort($ordered, fn($a,$b)=> $a['order'] <=> $b['order']);
+                ?>
+                <?php foreach ($ordered as $r): ?>
+                  <tr>
+                    <td class="num"><?= (int)$r['order'] ?></td>
+                    <td><?= h($r['question']) ?></td>
+                    <td><?= h($r['responsable']) ?></td>
+                    <td>
+                      <?php if ($r['status'] === 'OK'): ?>
+                        <span class="badge-ok">OK</span>
+                      <?php elseif ($r['status'] === '1'): ?>
+                        <span class="badge-err">1</span>
+                      <?php else: ?>
+                        <span class="badge-na">N</span>
+                      <?php endif; ?>
+                    </td>
+                  </tr>
+                <?php endforeach; ?>
+              <?php else: ?>
+                <tr><td colspan="4" class="muted">Sin datos para mostrar.</td></tr>
+              <?php endif; ?>
             </tbody>
           </table>
         </div>
       </div>
-
-      <div id="hiddenInputs" style="display:none;">
-        <?php foreach ($items as $it): $id=(int)$it['id']; ?>
-          <input type="hidden" name="ans[<?= $id ?>]" id="ans-<?= $id ?>" value="OK">
-        <?php endforeach; ?>
-      </div>
-
-      <button type="submit" class="fab" title="Guardar (Ctrl+Enter)">
-        <i class="fa-solid fa-floppy-disk"></i> Guardar auditoría
-      </button>
-    </form>
+    <?php endif; ?>
   </div>
 
   <script>
-    // Tooltips
-    document.addEventListener('DOMContentLoaded', () => {
-      const tts = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-      tts.map(el => new bootstrap.Tooltip(el));
-    });
-
-    function toggleOtro(id){
-      var sel = document.getElementById('resp-' + id);
-      var inp = document.getElementById('resp-otro-' + id);
-      if (sel.value === 'Otros') { inp.style.display = 'block'; inp.required = true; }
-      else { inp.style.display = 'none'; inp.required = false; inp.value=''; }
-    }
-    <?php foreach ($items as $it): $id=(int)$it['id']; ?> toggleOtro(<?= $id ?>); <?php endforeach; ?>
-
-    const rows = Array.from(document.querySelectorAll('#tbl tbody tr'));
-    let idx = 0;
-
-    function selectRow(i){
-      rows.forEach(r => r.classList.remove('sel'));
-      idx = Math.max(0, Math.min(rows.length-1, i));
-      const row = rows[idx]; row.classList.add('sel');
-      const rect = row.getBoundingClientRect();
-      if (rect.top < 90 || rect.bottom > window.innerHeight - 90) {
-        row.scrollIntoView({behavior:'smooth', block:'center'});
-      }
-    }
-    function setState(i, val){
-      const r = rows[i]; if (!r) return;
-      r.classList.remove('state-OK','state-1','state-N');
-      r.classList.add('state-'+val);
-      const badge = r.querySelector('.state-label');
-      if (val==='OK'){ badge.textContent='OK'; badge.className='state-badge b-ok state-label'; }
-      if (val==='1'){  badge.textContent='1';  badge.className='state-badge b-err state-label'; }
-      if (val==='N'){  badge.textContent='N';  badge.className='state-badge b-na state-label'; }
-      const id = r.getAttribute('data-id');
-      document.getElementById('ans-'+id).value = val;
-      recomputeStats();
-    }
-    function recomputeStats(){
-      let err=0, na=0, app=0;
-      rows.forEach(r=>{
-        const val = r.querySelector('.state-label').textContent;
-        if (val==='N'){ na++; }
-        else if (val==='1'){ app++; err++; }
-        else if (val==='OK'){ app++; }
-      });
-      const pctErr = app>0 ? Math.round((err/app)*10000)/100 : 0;
-      document.getElementById('st-err').textContent = err;
-      document.getElementById('st-na').textContent  = na;
-      document.getElementById('st-app').textContent = app+na;
-      document.getElementById('st-pct').textContent = pctErr.toFixed(2)+'%';
-    }
-    selectRow(0); recomputeStats();
-
-    // Teclado: ↑/↓ · ←=1 · →=N · ESPACIO=OK · R responsable · Ctrl+Enter guardar
-    document.addEventListener('keydown', (e) => {
-      const tag = document.activeElement.tagName;
-      const typing = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
-
-      if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); document.getElementById('auditForm').submit(); return; }
-
-      if (!typing && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','r','R'].includes(e.key)) e.preventDefault();
-      else if (typing) return;
-
-      if (e.key === 'ArrowUp') selectRow(idx-1);
-      else if (e.key === 'ArrowDown') selectRow(idx+1);
-      else if (e.key === 'ArrowLeft'){ setState(idx,'1'); selectRow(idx+1); }
-      else if (e.key === 'ArrowRight'){ setState(idx,'N'); selectRow(idx+1); }
-      else if (e.key === ' '){ setState(idx,'OK'); selectRow(idx+1); }
-      else if (e.key.toLowerCase() === 'r'){
-        const row = rows[idx], id = row.getAttribute('data-id');
-        const sel = document.getElementById('resp-'+id), otro = document.getElementById('resp-otro-'+id);
-        sel.focus(); setTimeout(()=>{ if (sel.value==='Otros'){ otro.style.display='block'; otro.required=true; otro.focus(); } },0);
-      }
-    });
+    // Donut % error visual
+    (function(){
+      const donut = document.getElementById('donutPct');
+      const pctTxt = document.getElementById('pctTxt');
+      if (!donut || !pctTxt) return;
+      const valStr = pctTxt.textContent.replace('%','').trim();
+      const p = Math.max(0, Math.min(100, parseFloat(valStr) || 0));
+      donut.style.background = `conic-gradient(var(--err-c) ${p}%, var(--bg-donut) 0)`;
+    })();
   </script>
 </body>
 </html>

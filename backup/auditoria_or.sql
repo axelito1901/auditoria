@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 22-08-2025 a las 22:47:09
+-- Tiempo de generación: 28-08-2025 a las 00:41:49
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -36,6 +36,14 @@ CREATE TABLE `audits` (
   `not_applicable_count` int(11) NOT NULL DEFAULT 0,
   `error_percentage` decimal(5,2) NOT NULL DEFAULT 0.00
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Volcado de datos para la tabla `audits`
+--
+
+INSERT INTO `audits` (`id`, `order_id`, `audited_at`, `total_items`, `errors_count`, `not_applicable_count`, `error_percentage`) VALUES
+(3, 3, '2025-08-26 21:15:29', 27, 5, 3, 20.83),
+(4, 4, '2025-08-26 21:25:58', 27, 3, 3, 12.50);
 
 -- --------------------------------------------------------
 
@@ -72,33 +80,35 @@ CREATE TABLE `checklist_items` (
 --
 
 INSERT INTO `checklist_items` (`id`, `item_order`, `question`, `responsable_default`, `active`) VALUES
-(1, 1, 'Datos de cliente llenados en forma completa (email, telefonos, dirección, nombre, DNI).', 'As. Citas', 1),
-(2, 2, 'Datos de la unidad llenados en forma completa (VIN, ID, chasis, nro motor, modelo, dominio, color).', 'As. Citas', 1),
-(3, 3, 'Coincide la fecha de entrega de la OR con la informada en sistema ELSA?.', 'As. Citas', 1),
-(4, 4, 'Trabajos solicitados por el cliente asentados en OR (división por items / claro sin interpretaciones ni diagnósticos).', 'As. Servicio', 1),
-(5, 5, 'Presupuestos e importes de trabajos / servicios solicitados por el cliente  asentados en el frente de la OR.', 'As. Servicio', 1),
-(6, 6, 'Fecha y hora de entrega pactada con el cliente asentada en OR.', 'As. Servicio', 1),
-(7, 7, 'Kilometraje de la unidad asentada en OR.', 'As. Servicio', 1),
-(8, 8, 'Recepción de unidad con tablet o planilla de llenado manual alternativa (adjunta a la OR).', 'As. Servicio', 1),
-(9, 9, 'Registro de daños,  faltantes y firma del cliente mediante tablet o planilla de llenado manual alternativa.', 'As. Servicio', 1),
-(10, 10, 'Ampliaciones de trabajos asentadas en OR.', 'As. Servicio', 1),
-(11, 11, 'Firma del Asesor de Servicio al frente de la OR en el campo correspondiente.', 'As. Servicio', 1),
-(12, 12, 'Firma y Aclaración del cliente al frente de la OR autorizando los trabajos (fecha, DNI, parentesco). Al ingreso de la unidad.', 'As. Servicio', 1),
-(13, 13, 'Firma del cliente por aceptación o rechazo de Ampliaciones de Trabajos.', 'As. Servicio', 1),
-(14, 14, 'Firma y aclaración del cliente al dorso de la OR dando conformidad (fecha, DNI, parentesco). Al retiro de la unidad.', 'As. Servicio', 1),
-(15, 15, 'Forma de pago y tipo de factura solicitados por el cliente aclarados en el frente de la OR.', 'As. Servicio', 1),
-(16, 16, 'Afectaciones de la unidad a campañas asentadas al frente de la OR (SI / NO).', 'As. Servicio', 1),
-(17, 17, 'Factura adjunta a la orden de reparación con detalle de mano de obra, repuestos y  trabajos no aceptados por el cliente.', 'Cajero', 1),
-(18, 18, 'Fichada del Técnico legible, completa y encuadrada en el campo correspondiente, al dorso de la OR.', 'Jefe de Taller', 1),
-(19, 19, 'Identificación del Técnico (legajo, nombre o apellido) , item y asentamiento de horas aplicadas al costado de la fichada.', 'Jefe de Taller', 1),
-(20, 20, 'Descripción completa del diagnóstico realizado por el Técnico en el cuadro superior del dorso de la OR (división por items).', 'Jefe de Taller', 1),
-(21, 21, 'Descripción completa de los trabajos realizados por el Técnico en el cuadro inferior del dorso de la OR (división por items).', 'Jefe de Taller', 1),
-(22, 22, 'Tabla de mantenimiento (extraída del ELSA) llenada en forma completa y correcta por el Técnico, con numero de OR y dominio asentado en forma manual adjunta a OR.', 'Jefe de Taller', 1),
-(23, 23, 'Asentamiento manual de fecha de cierre en OR.', 'Gerente PostVenta', 1),
-(24, 24, 'Firmas y Fechas del Jefe de Taller y el Técnico en Tabla de mantenimiento.', 'Jefe de Taller', 1),
-(25, 25, 'Vale/s de repuestos solicitados en ventanilla adjuntos a la OR.', 'Jefe de Taller', 1),
-(26, 26, 'Firmas en vale/s de repuestos de: Jefe de Taller, Técnico y Ventanillero.', 'Jefe de Taller', 1),
-(27, 27, 'Recorrido de prueba firmado al dorso de la OR por el Jefe de Taller con el kilometraje previo a la entrega especificado.', 'Jefe de Taller', 1);
+(1, 1, 'Datos de cliente llenados en forma completa (email, teléfonos, dirección, nombre, DNI).', 'As. Citas', 1),
+(2, 2, 'Datos de la unidad llenados en forma completa (VIN, ID, chasis, N° de motor, modelo, dominio, color).', 'As. Citas', 1),
+(3, 3, 'Kilometraje de la unidad asentado en la OR.', 'As. Servicio', 1),
+(4, 4, 'Fecha y hora de entrega pactada con el cliente asentada en la OR.', 'As. Servicio', 1),
+(5, 5, '¿Coincide la fecha de entrega de la OR con la informada en el sistema ELSA?', 'As. Citas', 1),
+(6, 6, 'Asentamiento manual de la fecha de cierre en la OR.', 'Gerente PostVenta', 1),
+(7, 7, 'Firma del Asesor de Servicio al frente de la OR en el campo correspondiente.', 'As. Servicio', 1),
+(8, 8, 'Afectaciones de la unidad a campañas asentadas al frente de la OR (SI / NO).', 'As. Servicio', 1),
+(9, 9, 'Forma de pago y tipo de factura solicitados por el cliente aclarados en el frente de la OR.', 'As. Servicio', 1),
+(10, 10, 'Trabajos solicitados por el cliente asentados en la OR (división por ítems; claro, sin interpretaciones ni diagnósticos).', 'As. Servicio', 1),
+(11, 11, 'Presupuestos e importes de trabajos/servicios solicitados por el cliente asentados en el frente de la OR.', 'As. Servicio', 1),
+(12, 12, 'Recepción de unidad con tablet o planilla de llenado manual alternativa (adjunta a la OR).', 'As. Servicio', 1),
+(13, 13, 'Registro de daños, faltantes y firma del cliente mediante tablet o planilla de llenado manual alternativa.', 'As. Servicio', 1),
+(14, 14, 'Firma y aclaración del cliente al frente de la OR autorizando los trabajos (fecha, DNI, parentesco). Al ingreso de la unidad.', 'As. Servicio', 1),
+(15, 15, 'Fichada del Técnico legible, completa y encuadrada en el campo correspondiente, al dorso de la OR.', 'Jefe de Taller', 1),
+(16, 16, 'Identificación del Técnico (legajo, nombre o apellido), ítem y asentamiento de horas aplicadas al costado de la fichada.', 'Jefe de Taller', 1),
+(17, 17, 'Descripción completa del diagnóstico realizado por el Técnico en el cuadro superior del dorso de la OR (división por ítems).', 'Jefe de Taller', 1),
+(18, 18, 'Descripción completa de los trabajos realizados por el Técnico en el cuadro inferior del dorso de la OR (división por ítems).', 'Jefe de Taller', 1),
+(19, 19, 'Ampliaciones de trabajos asentadas en la OR.', 'As. Servicio', 1),
+(20, 20, 'Ampliaciones correctamente documentadas y firmadas.', 'As. Servicio', 1),
+(21, 21, 'Recorrido de prueba firmado al dorso de la OR por el Jefe de Taller, con el kilometraje previo a la entrega especificado.', 'Jefe de Taller', 1),
+(22, 22, 'Firma y aclaración del cliente al dorso de la OR dando conformidad (fecha, DNI, parentesco). Al retiro de la unidad.', 'As. Servicio', 1),
+(23, 23, 'Factura adjunta a la OR.', 'Cajero', 1),
+(24, 24, 'Detalle de mano de obra, repuestos y trabajos no aceptados por el cliente documentados en la factura adjunta.', 'Cajero', 1),
+(25, 25, 'Tabla de mantenimiento (extraída de ELSA) completada en forma correcta por el Técnico, con número de OR y dominio asentados manualmente; adjunta a la OR.', 'Jefe de Taller', 1),
+(26, 26, 'Tabla de mantenimiento completa y correctamente confeccionada.', 'Jefe de Taller', 1),
+(27, 27, 'Firmas y fechas en la tabla de mantenimiento (Jefe de Taller y Técnico).', 'Jefe de Taller', 1),
+(28, 28, 'Vale/s de repuestos solicitados en ventanilla adjuntos a la OR.', 'Jefe de Taller', 1),
+(29, 29, 'Firmas en vale/s de repuestos: Jefe de Taller, Técnico y Ventanillero.', 'Jefe de Taller', 1);
 
 -- --------------------------------------------------------
 
@@ -115,6 +125,14 @@ CREATE TABLE `orders` (
   `notes` text DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Volcado de datos para la tabla `orders`
+--
+
+INSERT INTO `orders` (`id`, `order_number`, `order_type`, `auditor`, `week_date`, `notes`, `created_at`) VALUES
+(3, '342343', 'cliente', NULL, '2025-08-25', NULL, '2025-08-27 00:15:29'),
+(4, '62747', 'cliente', NULL, '2025-08-18', NULL, '2025-08-27 00:25:58');
 
 --
 -- Índices para tablas volcadas
@@ -157,25 +175,25 @@ ALTER TABLE `orders`
 -- AUTO_INCREMENT de la tabla `audits`
 --
 ALTER TABLE `audits`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- AUTO_INCREMENT de la tabla `audit_answers`
 --
 ALTER TABLE `audit_answers`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=55;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=109;
 
 --
 -- AUTO_INCREMENT de la tabla `checklist_items`
 --
 ALTER TABLE `checklist_items`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=28;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=30;
 
 --
 -- AUTO_INCREMENT de la tabla `orders`
 --
 ALTER TABLE `orders`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- Restricciones para tablas volcadas

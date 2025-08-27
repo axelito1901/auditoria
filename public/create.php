@@ -12,6 +12,8 @@ $items = $pdo->query("
 
 $now = new DateTime('now', new DateTimeZone('America/Argentina/Buenos_Aires'));
 $weekMonday = (clone $now)->modify('monday this week')->format('Y-m-d');
+// NUEVO: fecha visible por defecto en DD-MM-AAAA
+$todayDisplay = $now->format('d-m-Y');
 
 $responsables = [
   "As. Servicio",
@@ -58,9 +60,7 @@ $responsables = [
     /* Appbar */
     .appbar{position:sticky; top:0; z-index:20; background:rgba(10,15,24,.7); backdrop-filter: blur(8px); border-bottom:1px solid var(--border)}
     .appbar-inner{width:min(1200px, 94vw); margin:0 auto; padding:12px 0; display:flex; gap:12px; align-items:center}
-    .dot{width:22px; height:22px; border-radius:999px; background:linear-gradient(180deg,var(--accent),var(--accent-2)); box-shadow:0 0 16px rgba(0,163,224,.35)}
-    .brand{font-weight:800; letter-spacing:.25px; display:flex; align-items:center; gap:10px}
-    .brand i{opacity:.9}
+    .brand img{height:60px; width:auto; display:block}
     .spacer{flex:1}
     .btn{display:inline-flex; align-items:center; gap:8px; border:1px solid var(--border); color:#dbe7ff; background:transparent; padding:8px 12px; border-radius:10px}
     .btn:hover{border-color:#2a3a55}
@@ -93,7 +93,7 @@ $responsables = [
     .mini-row{display:grid; grid-template-columns: 1fr 34px 64px 58px; gap:8px; align-items:center; font-size:13px}
     .mini-pill{min-width:34px; text-align:center; padding:2px 8px; border-radius:999px; border:1px solid var(--border)}
     .p-ok{background:rgba(46,162,109,.12); color:#bcebd6}
-    .p-err{background:rgba(211,91,91,.12); color:#ffd6d6}
+    .p-err{background:rgba(211,91,91,.12); color:#ffd6d6; border:1px solid rgba(211,91,91,.35)}
 
     /* Donuts */
     .donut{
@@ -226,7 +226,9 @@ $responsables = [
   <div class="appbar">
     <div class="appbar-inner">
       <div class="dot"></div>
-      <div class="brand"><i class="fa-solid fa-clipboard-check"></i> Nueva Auditoría</div>
+      <div class="brand">
+        <img src="../assets/logo.png" alt="Logo Organización Sur">
+      </div>
       <div class="spacer"></div>
       <a class="btn" href="index.php"><i class="fa-solid fa-house"></i> Inicio</a>
     </div>
@@ -289,7 +291,10 @@ $responsables = [
       <!-- ===== Contenido principal ===== -->
       <main>
         <form method="post" action="save_audit.php" id="auditForm">
-          <input type="hidden" name="week_date" value="<?= htmlspecialchars($weekMonday) ?>">
+          <!-- week_date se seguirá enviando, pero se recalcula al cambiar la fecha -->
+          <input type="hidden" name="week_date" id="week_date" value="<?= htmlspecialchars($weekMonday) ?>">
+          <!-- NUEVO: audit_date (YYYY-MM-DD) para que el backend lo guarde directo -->
+          <input type="hidden" name="audit_date" id="audit_date" value="<?= htmlspecialchars($now->format('Y-m-d')) ?>">
 
           <div class="card grid">
             <div class="col-4">
@@ -306,12 +311,21 @@ $responsables = [
                 <span class="tapchip-text">Cliente</span>
                 <i class="fa-solid fa-rotate-right" style="opacity:.7"></i>
               </div>
-              <p class="muted" style="margin:.35rem 0 0">Tocá para alternar: cliente → garantía → interna</p>
+              <p class="muted" style="margin:.35rem 0 0"></p>
             </div>
 
+            <!-- REEMPLAZADO: antes mostraba "Semana (auto)" deshabilitado.
+                 Ahora mostramos FECHA editable en DD-MM-AAAA -->
             <div class="col-4">
-              <label class="lbl"><i class="fa-regular fa-calendar"></i>Semana (auto)</label>
-              <input type="text" value="<?= htmlspecialchars($weekMonday) ?>" disabled>
+              <label class="lbl"><i class="fa-regular fa-calendar"></i>Fecha de la auditoría</label>
+              <input type="text"
+                     id="audit_date_display"
+                     name="audit_date_display"
+                     required
+                     inputmode="numeric"
+                     pattern="\d{2}-\d{2}-\d{4}"
+                     placeholder="DD-MM-AAAA"
+                     value="<?= htmlspecialchars($todayDisplay) ?>">
             </div>
           </div>
 
@@ -322,8 +336,8 @@ $responsables = [
               <div class="stat-inline"><b>No aplica (N):</b> <span id="st-na">0</span></div>
               <div class="stat-inline"><b>% Error:</b> <span id="st-pct">0%</span></div>
             </div>
-            <p class="muted">PC: ↑/↓ mover · ← = 1 · → = N · Espacio = OK · R = responsable · Ctrl+Enter = guardar</p>
-            <p class="muted" style="margin-top:-6px">Tablet/Click: tocá el <b>ítem</b> para alternar <b>1 → OK → N</b>.</p>
+            <p class="muted"></p>
+            <p class="muted" style="margin-top:-6px"></b></p>
 
             <table id="tbl">
               <thead>
@@ -609,6 +623,72 @@ $responsables = [
       window.addEventListener('resize', applyMode);
 
       applyMode();
+    })();
+
+    // =========================
+    // NUEVO: Manejo de FECHA
+    // =========================
+    (function(){
+      const inputDisplay = document.getElementById('audit_date_display');
+      const hiddenISO    = document.getElementById('audit_date'); // YYYY-MM-DD
+      const weekDate     = document.getElementById('week_date');  // Lunes de esa semana
+
+      // Enmascarado simple DD-MM-AAAA
+      inputDisplay.addEventListener('input', () => {
+        let v = inputDisplay.value.replace(/[^\d]/g, '').slice(0, 8);
+        if (v.length >= 5) v = v.slice(0,2) + '-' + v.slice(2,4) + '-' + v.slice(4);
+        else if (v.length >= 3) v = v.slice(0,2) + '-' + v.slice(2);
+        inputDisplay.value = v;
+      });
+
+      function isValidDisplayDate(str){
+        if(!/^\d{2}-\d{2}-\d{4}$/.test(str)) return false;
+        const [d,m,y] = str.split('-').map(Number);
+        const dt = new Date(y, m-1, d);
+        return dt && dt.getFullYear()===y && (dt.getMonth()+1)===m && dt.getDate()===d;
+      }
+
+      function toISO(str){ // DD-MM-AAAA -> YYYY-MM-DD
+        const [d,m,y] = str.split('-');
+        return `${y}-${m}-${d}`;
+      }
+
+      function mondayOfWeek(iso){ // YYYY-MM-DD -> YYYY-MM-DD (lunes de esa semana)
+        const [Y,M,D] = iso.split('-').map(Number);
+        const dt = new Date(Y, M-1, D);
+        const day = dt.getDay(); // 0=domingo ... 1=lunes
+        const diffToMonday = (day === 0 ? -6 : 1 - day);
+        dt.setDate(dt.getDate() + diffToMonday);
+        const yy = dt.getFullYear();
+        const mm = String(dt.getMonth()+1).padStart(2,'0');
+        const dd = String(dt.getDate()).padStart(2,'0');
+        return `${yy}-${mm}-${dd}`;
+      }
+
+      function syncHidden(){
+        const val = inputDisplay.value.trim();
+        if (isValidDisplayDate(val)){
+          const iso = toISO(val);
+          hiddenISO.value = iso;
+          weekDate.value  = mondayOfWeek(iso);
+        }
+      }
+
+      inputDisplay.addEventListener('change', syncHidden);
+      // Sync inicial
+      syncHidden();
+
+      // Antes de enviar, validamos y sincronizamos
+      document.getElementById('auditForm').addEventListener('submit', (e)=>{
+        const val = inputDisplay.value.trim();
+        if (!isValidDisplayDate(val)){
+          e.preventDefault();
+          alert('La fecha debe tener formato válido DD-MM-AAAA.');
+          inputDisplay.focus();
+          return false;
+        }
+        syncHidden();
+      });
     })();
   </script>
 </body>
