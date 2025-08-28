@@ -1,25 +1,43 @@
 <?php
-// view_audit.php — Muestra una auditoría existente (GET id=)
-// Esquema asumido: orders, audits(order_id, total_items, errors_count, not_applicable_count, error_percentage),
-// audit_answers(audit_id, item_id, value, responsable_text, question_text), checklist_items(id,item_order,question)
+// view_audit.php — Muestra una orden auditada existente (GET id=)
+// Tablas: orders, audits(order_id,total_items,errors_count,not_applicable_count,error_percentage,audited_at),
+// audit_answers(audit_id,item_id,value,responsable_text,question_text), checklist_items(id,item_order,question)
 require_once __DIR__ . '/../app/db.php';
 date_default_timezone_set('America/Argentina/Buenos_Aires');
 $pdo = db();
 
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 
+// Día de la semana en español
+function dia_es($dateStr){
+  if (!$dateStr) return '';
+  // soporta 'YYYY-mm-dd' o 'YYYY-mm-dd HH:ii:ss'
+  $dt = DateTime::createFromFormat('Y-m-d H:i:s', $dateStr) ?: DateTime::createFromFormat('Y-m-d', $dateStr);
+  if (!$dt) {
+    // intento genérico
+    $ts = strtotime($dateStr);
+    if ($ts === false) return '';
+    $dt = (new DateTime())->setTimestamp($ts);
+  }
+  $dias = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+  $d = (int)$dt->format('w');
+  // 28/08/2025 por ejemplo
+  $fecha = $dt->format('d/m/Y');
+  return $dias[$d] . ' ' . $fecha;
+}
+
 $auditId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $errMsg = null;
-$hdr = null;     // cabecera auditoría + order
+$hdr = null;     // cabecera orden + audit
 $rows = [];      // respuestas
 $app = $err = $na = 0;
 $pct = 0.0;
 
 if ($auditId <= 0) {
-  $errMsg = 'Falta el parámetro ?id de la auditoría.';
+  $errMsg = 'Falta el parámetro ?id de la orden.';
 } else {
   try {
-    // 1) Cabecera auditoría + orden
+    // 1) Cabecera (incluyo audited_at para mostrar el día)
     $stmt = $pdo->prepare("
       SELECT
         a.id,
@@ -28,6 +46,7 @@ if ($auditId <= 0) {
         a.errors_count,
         a.not_applicable_count,
         a.error_percentage,
+        a.audited_at,
         o.order_number,
         o.order_type,
         o.week_date
@@ -40,9 +59,9 @@ if ($auditId <= 0) {
     $hdr = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$hdr) {
-      $errMsg = 'La auditoría no existe (id inválido).';
+      $errMsg = 'La orden no existe (id inválido).';
     } else {
-      // 2) Respuestas (completo question con checklist_items si hace falta)
+      // 2) Respuestas
       $stmt2 = $pdo->prepare("
         SELECT
           aa.item_id,
@@ -58,7 +77,7 @@ if ($auditId <= 0) {
       $stmt2->execute([':id' => $auditId]);
       $rows = $stmt2->fetchAll(PDO::FETCH_ASSOC);
 
-      // KPIs: usar guardados; si vinieron NULL o 0, calcular con respuestas
+      // KPIs (uso guardados; si faltan, calculo)
       $app = (int)($hdr['total_items'] ?? 0);
       $err = (int)($hdr['errors_count'] ?? 0);
       $na  = (int)($hdr['not_applicable_count'] ?? 0);
@@ -78,7 +97,7 @@ if ($auditId <= 0) {
       }
     }
   } catch (Throwable $e) {
-    $errMsg = 'Error al leer la auditoría: ' . $e->getMessage();
+    $errMsg = 'Error al leer la orden: ' . $e->getMessage();
   }
 }
 ?>
@@ -86,7 +105,7 @@ if ($auditId <= 0) {
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title><?= $hdr ? ('Auditoría #'.(int)$hdr['id']) : 'Ver auditoría' ?> · Organización Sur</title>
+  <title><?= $hdr ? ('Orden #'.(int)$hdr['id']) : 'Ver orden' ?> · Organización Sur</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <!-- Font Awesome -->
@@ -108,13 +127,12 @@ if ($auditId <= 0) {
         linear-gradient(180deg,#0a0f18, #0b121d 50%, #0a0f18 100%);
     }
     a{color:#cfe3ff; text-decoration:none}
-    a:hover{text-decoration:underline}
 
+    /* Appbar */
     .appbar{position:sticky; top:0; z-index:20; background:rgba(10,15,24,.7); backdrop-filter: blur(8px); border-bottom:1px solid var(--border)}
     .appbar-inner{width:min(1200px, 94vw); margin:0 auto; padding:12px 0; display:flex; gap:12px; align-items:center}
-    .dot{width:22px; height:22px; border-radius:999px; background:linear-gradient(180deg,var(--accent),var(--accent-2)); box-shadow:0 0 16px rgba(0,163,224,.35)}
-    .brand{font-weight:800; letter-spacing:.25px; display:flex; align-items:center; gap:10px}
-    .brand i{opacity:.9}
+    .brand{display:flex; align-items:center; gap:12px; font-weight:800; letter-spacing:.25px}
+    .brand img{height:60px; width:auto; display:block}
     .spacer{flex:1}
     .btn{display:inline-flex; align-items:center; gap:8px; border:1px solid var(--border); color:#dbe7ff; background:transparent; padding:8px 12px; border-radius:10px}
     .btn:hover{border-color:#2a3a55}
@@ -156,10 +174,9 @@ if ($auditId <= 0) {
 <body>
   <div class="appbar">
     <div class="appbar-inner">
-      <div class="dot"></div>
+      <!-- Logo a la izquierda (sin dot ni texto) -->
       <div class="brand">
-        <i class="fa-solid fa-clipboard-check"></i>
-        <span><?= $hdr ? 'Auditoría #'.(int)$hdr['id'] : 'Ver auditoría' ?></span>
+        <img src="../assets/logo.png" alt="Logo Organización Sur">
       </div>
       <div class="spacer"></div>
       <a class="btn" href="index.php"><i class="fa-solid fa-house"></i> Inicio</a>
@@ -179,17 +196,21 @@ if ($auditId <= 0) {
       <?php
         $typeMap = ['cliente'=>'Cliente','garantia'=>'Garantía','interna'=>'Interna'];
         $typeLabel = $typeMap[$hdr['order_type']] ?? ucfirst((string)$hdr['order_type']);
+        // Fecha principal para "día de la orden": priorizo audited_at si existe; si no, week_date
+        $fechaOrdenRef = $hdr['audited_at'] ?: $hdr['week_date'];
+        $diaOrden = dia_es($fechaOrdenRef);
       ?>
       <!-- Resumen -->
       <div class="card grid">
         <div class="col-6">
-          <h2 style="margin:0 0 8px"><i class="fa-solid fa-eye"></i> Detalle de auditoría</h2>
-          <p class="muted" style="margin:0">ID Auditoría: <b>#<?= (int)$hdr['id'] ?></b></p>
+          <h2 style="margin:0 0 8px"><i class="fa-solid fa-eye"></i> Detalle de orden</h2>
+          <p class="muted" style="margin:0">ID Orden: <b>#<?= (int)$hdr['id'] ?></b></p>
           <p class="muted" style="margin:0">OR: <b><?= h($hdr['order_number']) ?></b> · Tipo: <b><?= h($typeLabel) ?></b></p>
           <p class="muted" style="margin:0">Semana (lunes): <?= h($hdr['week_date']) ?></p>
+          <p class="muted" style="margin:0">Día de la orden: <b><?= h($diaOrden) ?></b></p>
         </div>
         <div class="col-6" style="display:flex; gap:10px; justify-content:flex-end; align-items:flex-start; flex-wrap:wrap">
-          <a class="btn" href="create.php"><i class="fa-solid fa-plus"></i> Nueva auditoría</a>
+          <a class="btn" href="create.php"><i class="fa-solid fa-plus"></i> Nueva orden</a>
           <a class="btn" href="index.php"><i class="fa-solid fa-house"></i> Inicio</a>
         </div>
       </div>
@@ -250,7 +271,7 @@ if ($auditId <= 0) {
                   </tr>
                 <?php endforeach; ?>
               <?php else: ?>
-                <tr><td colspan="4" class="muted">Sin respuestas para esta auditoría.</td></tr>
+                <tr><td colspan="4" class="muted">Sin respuestas para esta orden.</td></tr>
               <?php endif; ?>
             </tbody>
           </table>

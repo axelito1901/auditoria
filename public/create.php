@@ -55,7 +55,6 @@ $responsables = [
         linear-gradient(180deg,#0a0f18, #0b121d 50%, #0a0f18 100%);
     }
     a{color:#cfe3ff; text-decoration:none}
-    a:hover{text-decoration:underline}
 
     /* Appbar */
     .appbar{position:sticky; top:0; z-index:20; background:rgba(10,15,24,.7); backdrop-filter: blur(8px); border-bottom:1px solid var(--border)}
@@ -381,7 +380,7 @@ $responsables = [
             <?php endforeach; ?>
           </div>
 
-          <button type="submit" class="fab" title="Guardar (Ctrl+Enter)"><i class="fa-solid fa-floppy-disk"></i> Guardar auditoría</button>
+          <button type="submit" class="fab" title="Guardar (Ctrl+Enter)"><i class="fa-solid fa-floppy-disk"></i> Guardar orden</button>
         </form>
       </main>
     </div>

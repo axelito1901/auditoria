@@ -1,5 +1,5 @@
 <?php
-// save_audit.php — Guarda usando orders → audits → audit_answers y muestra confirmación bonita
+// save_audit.php — Guarda usando orders → audits → audit_answers y muestra confirmación
 require_once __DIR__ . '/../app/db.php';
 date_default_timezone_set('America/Argentina/Buenos_Aires');
 $pdo = db();
@@ -32,7 +32,7 @@ $orderId = null;
 $order_number = trim($_POST['order_number'] ?? '');
 $order_type   = trim($_POST['order_type'] ?? '');       // cliente | garantia | interna
 $week_date    = trim($_POST['week_date'] ?? '');        // YYYY-MM-DD (lunes de la semana)
-$audit_date   = trim($_POST['audit_date'] ?? '');       // opcional (si lo enviás), YYYY-MM-DD
+$audit_date   = trim($_POST['audit_date'] ?? '');       // opcional, YYYY-MM-DD
 
 $ans        = $_POST['ans']        ?? []; // [item_id => 'OK'|'1'|'N']
 $resp       = $_POST['resp']       ?? []; // [item_id => 'Responsable'|'Otros']
@@ -48,7 +48,7 @@ if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $week_date)) $errors[] = 'Fecha de sema
 $cleanAnswers = [];
 foreach ($ans as $iid => $val) {
   $iid = (int)$iid;
-  if (!isset($itemIndex[$iid])) continue; // ignorar ítems que no existen
+  if (!isset($itemIndex[$iid])) continue;
 
   $val = strtoupper(trim((string)$val));
   if (!in_array($val, ['OK','1','N'], true)) $val = 'OK';
@@ -66,11 +66,11 @@ foreach ($ans as $iid => $val) {
   ];
 }
 
-if (empty($cleanAnswers)) $errors[] = 'No se recibieron respuestas de auditoría.';
+if (empty($cleanAnswers)) $errors[] = 'No se recibieron respuestas de la orden.';
 
 $kpis = ['OK'=>0,'1'=>0,'N'=>0];
 foreach ($cleanAnswers as $row) $kpis[$row['status']]++;
-$app = $kpis['OK'] + $kpis['1'];            // aplicables
+$app = $kpis['OK'] + $kpis['1']; // aplicables
 $err = $kpis['1'];
 $na  = $kpis['N'];
 $pct = ($app > 0) ? round(($err / $app) * 100, 2) : 0.0;
@@ -83,7 +83,6 @@ if (empty($errors)) {
     $pdo->beginTransaction();
 
     // 1) Buscar ó crear la OR en `orders`
-    //    (si ya existe por order_number, la usamos; si no, la creamos)
     $stmtOrd = $pdo->prepare("SELECT id FROM orders WHERE order_number = :num LIMIT 1");
     $stmtOrd->execute([':num' => $order_number]);
     $orderId = $stmtOrd->fetchColumn();
@@ -100,7 +99,7 @@ if (empty($errors)) {
       ]);
       $orderId = (int)$pdo->lastInsertId();
     } else {
-      // opcional: si querés mantener sincronizado tipo/semana cuando la OR ya existe
+      // Mantener sincronizado tipo/semana si ya existe
       $stmtUpdOrd = $pdo->prepare("
         UPDATE orders
         SET order_type = :type, week_date = :week
@@ -113,7 +112,7 @@ if (empty($errors)) {
       ]);
     }
 
-    // 2) Crear la auditoría en `audits`
+    // 2) Crear la auditoría (registro de la orden auditada) en `audits`
     $stmtA = $pdo->prepare("
       INSERT INTO audits (order_id, total_items, errors_count, not_applicable_count, error_percentage)
       VALUES (:order_id, :total, :errors, :na, :pct)
@@ -153,14 +152,14 @@ if (empty($errors)) {
 $errMsg = empty($errors) ? null : implode(' ', $errors);
 
 // ===============================
-// UI — mismo estilo que create.php (sin Bootstrap)
+// UI — estilo consistente con el resto
 // ===============================
 ?>
 <!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title><?= $auditId ? 'Auditoría guardada' : 'Error al guardar' ?> · Organización Sur</title>
+  <title><?= $auditId ? 'Orden guardada' : 'Error al guardar' ?> · Organización Sur</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <!-- Font Awesome -->
@@ -182,14 +181,14 @@ $errMsg = empty($errors) ? null : implode(' ', $errors);
         linear-gradient(180deg,#0a0f18, #0b121d 50%, #0a0f18 100%);
     }
     a{color:#cfe3ff; text-decoration:none}
-    a:hover{text-decoration:underline}
 
+    /* Appbar */
     .appbar{position:sticky; top:0; z-index:20; background:rgba(10,15,24,.7); backdrop-filter: blur(8px); border-bottom:1px solid var(--border)}
     .appbar-inner{width:min(1200px, 94vw); margin:0 auto; padding:12px 0; display:flex; gap:12px; align-items:center}
-    .dot{width:22px; height:22px; border-radius:999px; background:linear-gradient(180deg,var(--accent),var(--accent-2)); box-shadow:0 0 16px rgba(0,163,224,.35)}
-    .brand{font-weight:800; letter-spacing:.25px; display:flex; align-items:center; gap:10px}
-    .brand i{opacity:.9}
+    .brand{display:flex; align-items:center; gap:12px; font-weight:800; letter-spacing:.25px}
+    .brand img{height:60px; width:auto; display:block}
     .spacer{flex:1}
+
     .btn{display:inline-flex; align-items:center; gap:8px; border:1px solid var(--border); color:#dbe7ff; background:transparent; padding:8px 12px; border-radius:10px}
     .btn:hover{border-color:#2a3a55}
     .btn-primary{background:linear-gradient(180deg,var(--accent),var(--accent-2)); color:#fff; border:0}
@@ -230,10 +229,9 @@ $errMsg = empty($errors) ? null : implode(' ', $errors);
 <body>
   <div class="appbar">
     <div class="appbar-inner">
-      <div class="dot"></div>
+      <!-- Logo a la izquierda (dot y texto eliminados) -->
       <div class="brand">
-        <i class="fa-solid fa-clipboard-check"></i>
-        <span><?= $auditId ? 'Auditoría guardada' : 'Error al guardar' ?></span>
+        <img src="../assets/logo.png" alt="Logo Organización Sur">
       </div>
       <div class="spacer"></div>
       <a class="btn" href="index.php"><i class="fa-solid fa-house"></i> Inicio</a>
@@ -252,24 +250,23 @@ $errMsg = empty($errors) ? null : implode(' ', $errors);
       </div>
     <?php else: ?>
       <?php
-        // Datos para mostrar
         $order_types = ['cliente'=>'Cliente','garantia'=>'Garantía','interna'=>'Interna'];
         $order_type_label = $order_types[$order_type] ?? ucfirst($order_type);
       ?>
       <!-- Resumen -->
       <div class="card grid">
         <div class="col-6">
-          <h2 style="margin:0 0 8px"><i class="fa-solid fa-circle-check" style="color:#22c55e"></i> Guardado correctamente</h2>
-          <p class="muted" style="margin:0">ID Auditoría: <b>#<?= (int)$auditId ?></b></p>
+          <h2 style="margin:0 0 8px"><i class="fa-solid fa-circle-check" style="color:#22c55e"></i> Orden guardada correctamente</h2>
+          <p class="muted" style="margin:0">ID Orden: <b>#<?= (int)$auditId ?></b></p>
           <p class="muted" style="margin:0">OR: <b><?= h($order_number) ?></b> · Tipo: <b><?= h($order_type_label) ?></b></p>
           <p class="muted" style="margin:0">Semana (lunes): <?= h($week_date) ?></p>
           <?php if ($audit_date): ?>
-            <p class="muted" style="margin:0">Fecha auditoría: <?= h(DateTime::createFromFormat('Y-m-d',$audit_date)->format('d-m-Y')) ?></p>
+            <p class="muted" style="margin:0">Fecha de orden: <?= h(DateTime::createFromFormat('Y-m-d',$audit_date)->format('d-m-Y')) ?></p>
           <?php endif; ?>
         </div>
         <div class="col-6" style="display:flex; gap:10px; justify-content:flex-end; align-items:flex-start; flex-wrap:wrap">
-          <a class="btn btn-primary" href="view_audit.php?id=<?= (int)$auditId ?>"><i class="fa-solid fa-eye"></i> Ver auditoría</a>
-          <a class="btn" href="create.php"><i class="fa-solid fa-plus"></i> Nueva auditoría</a>
+          <a class="btn btn-primary" href="view_audit.php?id=<?= (int)$auditId ?>"><i class="fa-solid fa-eye"></i> Ver orden</a>
+          <a class="btn" href="create.php"><i class="fa-solid fa-plus"></i> Nueva orden</a>
           <a class="btn" href="index.php"><i class="fa-solid fa-house"></i> Inicio</a>
         </div>
       </div>
@@ -292,10 +289,10 @@ $errMsg = empty($errors) ? null : implode(' ', $errors);
         </div>
       </div>
 
-      <!-- Tabla de resultados -->
+      <!-- Resultados -->
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
-          <div class="muted"><i class="fa-solid fa-list-check"></i> Resultados de la auditoría</div>
+          <div class="muted"><i class="fa-solid fa-list-check"></i> Resultados de la orden</div>
           <div class="muted" style="font-size:12px">Total ítems: <?= count($cleanAnswers ?? []) ?></div>
         </div>
         <div style="overflow:auto">
